@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_rapier3d::prelude::*;
+use bevy_rapier3d::{prelude::*, parry::shape::HalfSpace};
 
 const BALL_SCALE: f32 = 3.0;
 
@@ -33,6 +33,10 @@ struct Paddle {
 
 #[derive(Component)]
 struct Ball;
+
+#[derive(Component)]
+struct Wall;
+
 
 fn setup(
     mut commands: Commands,
@@ -92,18 +96,36 @@ fn setup(
         })
         .insert(Velocity::linear(Vec3::new(-40.0, 0.0, 0.0)));
 
-    // TODO: Add walls at +-36y for the ball to bounce off of.
+    // TODO: Add walls at +-40y for the ball to bounce off of.
+
+    commands
+        .spawn(Wall)
+        .insert(TransformBundle::from(Transform::from_xyz(0.0, -40.0, 0.0)))
+        .insert(RigidBody::Fixed)
+        .insert(Collider::halfspace(Vect::new(0.0, 1.0, 0.0)).unwrap());
+
+    commands
+        .spawn(Wall)
+        .insert(TransformBundle::from(Transform::from_xyz(0.0, 40.0, 0.0)))
+        .insert(RigidBody::Fixed)
+        .insert(Collider::halfspace(Vect::new(0.0, -1.0, 0.0)).unwrap());
+
+
+    // commands
+    //     .spawn(Wall)
+    //     .insert(RigidBody::Fixed)
+    //     .insert(Collider::cuboid(60.0, 20.0, 5.0))
+    //     .insert(Transform::from_translation(Vec3::new(0.0, 41.0, 0.0)));
 
     // TODO: Add Sensors behind the paddles (+-60?) for scoring + resetting.
 
-    commands.spawn(PointLightBundle {
-        point_light: PointLight {
-            intensity: 15000.0,
-            range: 200.0,
+    commands.spawn(DirectionalLightBundle {
+        directional_light: DirectionalLight {
+            color: Color::WHITE,
+            illuminance: 16000.0,
             shadows_enabled: true,
             ..default()
         },
-        transform: Transform::from_xyz(0.0, 0.0, 120.0),
         ..default()
     });
 
@@ -153,6 +175,7 @@ fn player_controller(
     }
 }
 
+#[cfg(debug_assertions)]
 fn debug_system(paddle_loc: Query<(&Transform, &Paddle)>) {
     for (transform, paddle) in paddle_loc.iter() {
         println!(
@@ -171,9 +194,10 @@ fn main() {
     #[cfg(debug_assertions)]
     {
         app.add_plugins(RapierDebugRenderPlugin::default());
+        app.add_systems(Update, debug_system);
     }
 
     app.add_systems(Startup, setup)
-        .add_systems(Update, (player_controller, debug_system))
+        .add_systems(Update, player_controller)
         .run();
 }
