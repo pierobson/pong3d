@@ -1,10 +1,11 @@
 use bevy::prelude::*;
-use bevy_rapier3d::{prelude::*, parry::shape::HalfSpace};
+use bevy_rapier3d::prelude::*;
 
 const BALL_SCALE: f32 = 3.0;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 enum Team {
+    #[default]
     Left,
     Right,
 }
@@ -19,16 +20,25 @@ impl std::fmt::Display for Team {
 }
 
 #[derive(Default)]
-enum InputDirection {
+enum InputYDirection {
     #[default]
     None,
     Up,
     Down,
 }
 
-#[derive(Component)]
+#[derive(Default)]
+enum InputXDirection {
+    #[default]
+    None,
+    Left,
+    Right,
+}
+
+#[derive(Component, Default)]
 struct Paddle {
     team: Team,
+    velocity: Vec3,
 }
 
 #[derive(Component)]
@@ -37,6 +47,8 @@ struct Ball;
 #[derive(Component)]
 struct Wall;
 
+#[derive(Component)]
+struct Goal;
 
 fn setup(
     mut commands: Commands,
@@ -52,32 +64,42 @@ fn setup(
 
     config.gravity = Vec3::default();
 
+    let paddle1_transform = Vec3::new(-50.0, 0.0, 0.0);
+
     // Setup paddle
     commands
         .spawn(PbrBundle {
             mesh: paddle_mesh.clone(),
             material: materials.add(Color::rgb(0.0, 1.0, 0.0).into()),
-            transform: Transform::from_translation(Vec3::new(-50.0, 0.0, 0.0))
+            transform: Transform::from_translation(paddle1_transform.clone())
                 .with_scale(paddle_scale.clone()),
             ..Default::default()
         })
-        .insert(Paddle { team: Team::Left })
-        .insert(RigidBody::KinematicVelocityBased)
-        .insert(Collider::cuboid(0.5, 0.5, 0.5))
-        .insert(Velocity::default());
+        .insert(Paddle {
+            team: Team::Left,
+            ..default()
+        })
+        .insert(RigidBody::KinematicPositionBased)
+        .insert(KinematicCharacterController::default())
+        .insert(Collider::cuboid(0.5, 0.5, 0.5));
+
+    let paddle2_transform = Vec3::new(50.0, 0.0, 0.0);
 
     commands
         .spawn(PbrBundle {
-            mesh: paddle_mesh,
+            mesh: paddle_mesh.clone(),
             material: materials.add(Color::rgb(1.0, 0.0, 0.0).into()),
-            transform: Transform::from_translation(Vec3::new(50.0, 0.0, 0.0))
+            transform: Transform::from_translation(paddle2_transform.clone())
                 .with_scale(paddle_scale.clone()),
             ..Default::default()
         })
-        .insert(Paddle { team: Team::Right })
-        .insert(RigidBody::KinematicVelocityBased)
-        .insert(Collider::cuboid(0.5, 0.5, 0.5))
-        .insert(Velocity::default());
+        .insert(Paddle {
+            team: Team::Right,
+            ..default()
+        })
+        .insert(RigidBody::KinematicPositionBased)
+        .insert(KinematicCharacterController::default())
+        .insert(Collider::cuboid(0.5, 0.5, 0.5));
 
     // Setup ball
     commands
@@ -94,9 +116,9 @@ fn setup(
             coefficient: 1.05,
             combine_rule: CoefficientCombineRule::Max,
         })
-        .insert(Velocity::linear(Vec3::new(-40.0, 0.0, 0.0)));
+        .insert(Velocity::linear(Vec3::new(-100.0, 0.0, 0.0)));
 
-    // TODO: Add walls at +-40y for the ball to bounce off of.
+    // Add walls at +-40y for the ball to bounce off of.
 
     commands
         .spawn(Wall)
@@ -110,14 +132,24 @@ fn setup(
         .insert(RigidBody::Fixed)
         .insert(Collider::halfspace(Vect::new(0.0, -1.0, 0.0)).unwrap());
 
+    
+    // TODO: Add walls to box in either end of the game and the midpoint as part of a 
+    //       collision group to box in the Paddles but not affect the ball.
 
-    // commands
-    //     .spawn(Wall)
-    //     .insert(RigidBody::Fixed)
-    //     .insert(Collider::cuboid(60.0, 20.0, 5.0))
-    //     .insert(Transform::from_translation(Vec3::new(0.0, 41.0, 0.0)));
 
-    // TODO: Add Sensors behind the paddles (+-60?) for scoring + resetting.
+    // TODO: Add Sensors behind the paddles (+-60?) for scoring.
+
+    commands
+        .spawn(Goal)
+        .insert(TransformBundle::from(Transform::from_xyz(-60.0, 0.0, 0.0)))
+        .insert(Collider::halfspace(Vect::new(1.0, 1.0, 0.0)).unwrap())
+        .insert(Sensor);
+
+    commands
+        .spawn(Goal)
+        .insert(TransformBundle::from(Transform::from_xyz(60.0, 0.0, 0.0)))
+        .insert(Collider::halfspace(Vect::new(-1.0, 1.0, 0.0)).unwrap())
+        .insert(Sensor);
 
     commands.spawn(DirectionalLightBundle {
         directional_light: DirectionalLight {
@@ -137,43 +169,77 @@ fn setup(
     });
 }
 
-fn player_controller(
-    mut paddle_query: Query<(&Paddle, &mut Velocity)>,
-    input: Res<Input<KeyCode>>,
-) {
-    for (paddle, mut velocity) in paddle_query.iter_mut() {
-        let mut dir = InputDirection::default();
+fn player_controller(mut paddle_query: Query<&mut Paddle>, input: Res<Input<KeyCode>>) {
+    for mut paddle in paddle_query.iter_mut() {
+        let mut y_dir = InputYDirection::default();
+        let mut x_dir = InputXDirection::default();
 
         match paddle.team {
             Team::Left => {
                 if input.pressed(KeyCode::W) {
-                    dir = InputDirection::Up;
+                    y_dir = InputYDirection::Up;
                 } else if input.pressed(KeyCode::S) {
-                    dir = InputDirection::Down;
+                    y_dir = InputYDirection::Down;
+                }
+
+                if input.pressed(KeyCode::A) {
+                    x_dir = InputXDirection::Left;
+                } else if input.pressed(KeyCode::D) {
+                    x_dir = InputXDirection::Right;
                 }
             }
             Team::Right => {
                 if input.pressed(KeyCode::P) {
-                    dir = InputDirection::Up;
-                } else if input.pressed(KeyCode::L) {
-                    dir = InputDirection::Down;
+                    y_dir = InputYDirection::Up;
+                } else if input.pressed(KeyCode::Semicolon) {
+                    y_dir = InputYDirection::Down;
+                }
+
+                if input.pressed(KeyCode::L) {
+                    x_dir = InputXDirection::Left;
+                } else if input.pressed(KeyCode::Apostrophe) {
+                    x_dir = InputXDirection::Right;
                 }
             }
         }
 
-        match dir {
-            InputDirection::None => {
-                *velocity = Velocity::linear(Vec3::default());
+        match y_dir {
+            InputYDirection::None => {
+                paddle.velocity.y = 0.0;
             }
-            InputDirection::Up => {
-                *velocity = Velocity::linear(Vec3::new(0.0, 50.0, 0.0));
+            InputYDirection::Up => {
+                paddle.velocity.y = 1.0;
             }
-            InputDirection::Down => {
-                *velocity = Velocity::linear(Vec3::new(0.0, -50.0, 0.0));
+            InputYDirection::Down => {
+                paddle.velocity.y = -1.0;
+            }
+        }
+
+        match x_dir {
+            InputXDirection::None => {
+                paddle.velocity.x = 0.0;
+            }
+            InputXDirection::Left => {
+                paddle.velocity.x = -1.0;
+            }
+            InputXDirection::Right => {
+                paddle.velocity.x = 1.0;
             }
         }
     }
 }
+
+fn update_character_controller(
+    mut character_query: Query<(&mut KinematicCharacterController, &Paddle), With<Paddle>>,
+) {
+    for (mut controller, paddle) in character_query.iter_mut() {
+        controller.translation = match controller.translation {
+            Some(t) => Some(t + paddle.velocity),
+            None => Some(paddle.velocity),
+        }
+    }
+}
+
 
 #[cfg(debug_assertions)]
 fn debug_system(paddle_loc: Query<(&Transform, &Paddle)>) {
@@ -188,7 +254,7 @@ fn debug_system(paddle_loc: Query<(&Transform, &Paddle)>) {
 fn main() {
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
+    app.add_plugins(DefaultPlugins)
         .add_plugins(RapierPhysicsPlugin::<NoUserData>::default());
 
     #[cfg(debug_assertions)]
@@ -198,6 +264,6 @@ fn main() {
     }
 
     app.add_systems(Startup, setup)
-        .add_systems(Update, player_controller)
+        .add_systems(Update, (player_controller, update_character_controller))
         .run();
 }
